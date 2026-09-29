@@ -1,5 +1,5 @@
 import streamlit as st
-import mysql.connector
+import sqlite3
 from PIL import Image
 import pytesseract
 import re
@@ -27,37 +27,33 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fungsi koneksi database Laragon MySQL
+# Fungsi koneksi database SQLite (membuat file database.db otomatis)
 def get_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="db_absensi_gaji"
-    )
+    conn = sqlite3.connect("database.db", check_same_thread=False)
+    return conn
 
-# Inisialisasi tabel database
+# Inisialisasi tabel database SQLite
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nama VARCHAR(100),
-            kontak VARCHAR(50) UNIQUE,
-            password VARCHAR(100)
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nama TEXT,
+            kontak TEXT UNIQUE,
+            password TEXT
         )
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS riwayat_absen (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            tanggal VARCHAR(50),
-            jam_masuk VARCHAR(10),
-            jam_keluar VARCHAR(10),
-            total_jam FLOAT,
-            estimasi_gaji INT,
-            UNIQUE KEY unique_user_date (user_id, tanggal)
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            tanggal TEXT,
+            jam_masuk TEXT,
+            jam_keluar TEXT,
+            total_jam REAL,
+            estimasi_gaji INTEGER,
+            UNIQUE(user_id, tanggal)
         )
     """)
     conn.commit()
@@ -87,17 +83,17 @@ if not st.session_state['user_logged_in']:
             if st.button("Masuk Sekarang", use_container_width=True):
                 try:
                     conn = get_connection()
-                    cursor = conn.cursor(dictionary=True)
-                    cursor.execute("SELECT * FROM users WHERE kontak = %s AND password = %s", (login_kontak, login_pass))
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, nama, kontak, password FROM users WHERE kontak = ? AND password = ?", (login_kontak, login_pass))
                     user = cursor.fetchone()
                     cursor.close()
                     conn.close()
                     
                     if user:
                         st.session_state['user_logged_in'] = True
-                        st.session_state['user_id'] = user['id']
-                        st.session_state['user_nama'] = user['nama']
-                        st.success(f"Selamat datang kembali, {user['nama']}!")
+                        st.session_state['user_id'] = user[0]
+                        st.session_state['user_nama'] = user[1]
+                        st.success(f"Selamat datang kembali, {user[1]}!")
                         st.rerun()
                     else:
                         st.error("Kontak atau password salah!")
@@ -114,7 +110,7 @@ if not st.session_state['user_logged_in']:
                     try:
                         conn = get_connection()
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (%s, %s, %s)", (reg_nama, reg_kontak, reg_pass))
+                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (?, ?, ?)", (reg_nama, reg_kontak, reg_pass))
                         conn.commit()
                         cursor.close()
                         conn.close()
@@ -210,7 +206,7 @@ else:
                         cursor = conn.cursor()
                         query = """
                             INSERT INTO riwayat_absen (user_id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji) 
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            VALUES (?, ?, ?, ?, ?, ?)
                         """
                         cursor.execute(query, (st.session_state['user_id'], tgl_input, jam_masuk_input, jam_keluar_input, round(total_jam_bersih, 2), estimasi_gaji))
                         conn.commit()
@@ -222,11 +218,8 @@ else:
                         st.session_state['file_uploader_key'] += 1
                         st.rerun()
                         
-                    except mysql.connector.Error as err:
-                        if err.errno == 1062:
-                            st.error(f"Gagal: Absensi untuk tanggal **{tgl_input}** sudah pernah di-input sebelumnya!")
-                        else:
-                            st.error(f"Terjadi kesalahan database: {err}")
+                    except sqlite3.IntegrityError:
+                        st.error(f"Gagal: Absensi untuk tanggal **{tgl_input}** sudah pernah di-input sebelumnya!")
                     except Exception as err:
                         st.error(f"Terjadi kesalahan format waktu: {err}")
 
@@ -236,7 +229,7 @@ else:
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = %s ORDER BY id DESC", (st.session_state['user_id'],))
+        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = ? ORDER BY id DESC", (st.session_state['user_id'],))
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -263,9 +256,8 @@ else:
                     clean_date_str = re.sub(r'^[A-Za-z]+,\s+', '', tgl_str) + " 2026"
                     dt = datetime.strptime(clean_date_str, "%B %d %Y")
                     
-                    # Tentukan awal pekan (Senin) dan akhir pekan (Jumat/Minggu) dari tanggal tersebut
-                    start_of_week = dt - timedelta(days=dt.weekday()) # Hari Senin di minggu itu
-                    end_of_week = start_of_week + timedelta(days=4)   # Hari Jumat di minggu itu
+                    start_of_week = dt - timedelta(days=dt.weekday())
+                    end_of_week = start_of_week + timedelta(days=4)
                     
                     kelompok = f"Periode: {start_of_week.strftime('%d %b')} - {end_of_week.strftime('%d %b %Y')}"
                 except Exception:
@@ -295,7 +287,7 @@ else:
                                 try:
                                     conn_del = get_connection()
                                     cur_del = conn_del.cursor()
-                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = %s AND user_id = %s", (row_id, st.session_state['user_id']))
+                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = ? AND user_id = ?", (row_id, st.session_state['user_id']))
                                     conn_del.commit()
                                     cur_del.close()
                                     conn_del.close()
