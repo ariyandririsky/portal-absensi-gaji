@@ -149,6 +149,10 @@ else:
         if uploaded_file is not None:
             if st.button("🗑️ Batalkan Gambar", use_container_width=True):
                 st.session_state['file_uploader_key'] += 1
+                if 'ocr_date' in st.session_state:
+                    del st.session_state['ocr_date']
+                    del st.session_state['ocr_in']
+                    del st.session_state['ocr_out']
                 st.rerun()
 
     if uploaded_file is not None:
@@ -163,24 +167,26 @@ else:
         with col2:
             st.subheader("⚙️ Hasil Ekstraksi & Form")
             
-            try:
-                text = pytesseract.image_to_string(image)
-                in_match = re.search(r'In[:\s]*(\d{2}:\d{2}:\d{2})', text, re.IGNORECASE)
-                out_match = re.search(r'Out[:\s]*(\d{2}:\d{2}:\d{2})', text, re.IGNORECASE)
-                date_match = re.search(r'([A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2})', text)
-                
-                default_date = date_match.group(1) if date_match else "Tuesday, September 29"
-                default_in = in_match.group(1) if in_match else "07:52:37"
-                default_out = out_match.group(1) if out_match else "17:05:51"
-            except Exception:
-                default_date = "Tuesday, September 29"
-                default_in = "07:52:37"
-                default_out = "17:05:51"
+            # Jalankan OCR sekali dan kunci nilainya di session_state agar stabil
+            if 'ocr_date' not in st.session_state:
+                try:
+                    text = pytesseract.image_to_string(image)
+                    in_match = re.search(r'In[:\s]*(\d{2}:\d{2}:\d{2})', text, re.IGNORECASE)
+                    out_match = re.search(r'Out[:\s]*(\d{2}:\d{2}:\d{2})', text, re.IGNORECASE)
+                    date_match = re.search(r'([A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2})', text)
+                    
+                    st.session_state['ocr_date'] = date_match.group(1) if date_match else "Tuesday, September 29"
+                    st.session_state['ocr_in'] = in_match.group(1) if in_match else "07:52:37"
+                    st.session_state['ocr_out'] = out_match.group(1) if out_match else "17:05:51"
+                except Exception:
+                    st.session_state['ocr_date'] = "Tuesday, September 29"
+                    st.session_state['ocr_in'] = "07:52:37"
+                    st.session_state['ocr_out'] = "17:05:51"
 
             with st.form("form_absen"):
-                tgl_input = st.text_input("Tanggal Absen (Sesuai Gambar)", value=default_date)
-                jam_masuk_input = st.text_input("Jam Masuk (HH:MM:SS)", value=default_in)
-                jam_keluar_input = st.text_input("Jam Keluar (HH:MM:SS)", value=default_out)
+                tgl_input = st.text_input("Tanggal Absen (Sesuai Gambar)", value=st.session_state['ocr_date'])
+                jam_masuk_input = st.text_input("Jam Masuk (HH:MM:SS)", value=st.session_state['ocr_in'])
+                jam_keluar_input = st.text_input("Jam Keluar (HH:MM:SS)", value=st.session_state['ocr_out'])
                 
                 submitted = st.form_submit_button("🚀 Hitung & Simpan Data", use_container_width=True)
                 
@@ -215,6 +221,12 @@ else:
                         
                         st.success(f"Berhasil disimpan! Jam Bersih: {round(total_jam_bersih, 2)} jam | Gaji: Rp {estimasi_gaji:,}")
                         
+                        # Bersihkan cache OCR setelah sukses disimpan
+                        if 'ocr_date' in st.session_state:
+                            del st.session_state['ocr_date']
+                            del st.session_state['ocr_in']
+                            del st.session_state['ocr_out']
+                            
                         st.session_state['file_uploader_key'] += 1
                         st.rerun()
                         
