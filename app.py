@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 from PIL import Image
 import pytesseract
 import re
@@ -27,38 +27,43 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fungsi koneksi database SQLite (membuat file database.db otomatis)
+# Fungsi koneksi ke database Supabase (PostgreSQL)
 def get_connection():
-    conn = sqlite3.connect("database.db", check_same_thread=False)
+    # Ambil URL database dari Streamlit Secrets
+    db_url = st.secrets["SUPABASE_DB_URL"]
+    conn = psycopg2.connect(db_url)
     return conn
 
-# Inisialisasi tabel database SQLite
+# Inisialisasi tabel database PostgreSQL
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nama TEXT,
-            kontak TEXT UNIQUE,
-            password TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS riwayat_absen (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            tanggal TEXT,
-            jam_masuk TEXT,
-            jam_keluar TEXT,
-            total_jam REAL,
-            estimasi_gaji INTEGER,
-            UNIQUE(user_id, tanggal)
-        )
-    """)
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                nama TEXT,
+                kontak TEXT UNIQUE,
+                password TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS riwayat_absen (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER,
+                tanggal TEXT,
+                jam_masuk TEXT,
+                jam_keluar TEXT,
+                total_jam REAL,
+                estimasi_gaji INTEGER,
+                CONSTRAINT unique_user_tanggal UNIQUE (user_id, tanggal)
+            )
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        st.error(f"Gagal menginisialisasi database: {e}")
 
 init_db()
 
@@ -84,7 +89,7 @@ if not st.session_state['user_logged_in']:
                 try:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("SELECT id, nama, kontak, password FROM users WHERE kontak = ? AND password = ?", (login_kontak, login_pass))
+                    cursor.execute("SELECT id, nama, kontak, password FROM users WHERE kontak = %s AND password = %s", (login_kontak, login_pass))
                     user = cursor.fetchone()
                     cursor.close()
                     conn.close()
@@ -110,7 +115,7 @@ if not st.session_state['user_logged_in']:
                     try:
                         conn = get_connection()
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (?, ?, ?)", (reg_nama, reg_kontak, reg_pass))
+                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (%s, %s, %s)", (reg_nama, reg_kontak, reg_pass))
                         conn.commit()
                         cursor.close()
                         conn.close()
@@ -167,7 +172,6 @@ else:
         with col2:
             st.subheader("⚙️ Hasil Ekstraksi & Form")
             
-            # Jalankan OCR sekali dan kunci nilainya di session_state agar stabil
             if 'ocr_date' not in st.session_state:
                 try:
                     text = pytesseract.image_to_string(image)
@@ -212,7 +216,7 @@ else:
                         cursor = conn.cursor()
                         query = """
                             INSERT INTO riwayat_absen (user_id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji) 
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                         """
                         cursor.execute(query, (st.session_state['user_id'], tgl_input, jam_masuk_input, jam_keluar_input, round(total_jam_bersih, 2), estimasi_gaji))
                         conn.commit()
@@ -221,7 +225,6 @@ else:
                         
                         st.success(f"Berhasil disimpan! Jam Bersih: {round(total_jam_bersih, 2)} jam | Gaji: Rp {estimasi_gaji:,}")
                         
-                        # Bersihkan cache OCR setelah sukses disimpan
                         if 'ocr_date' in st.session_state:
                             del st.session_state['ocr_date']
                             del st.session_state['ocr_in']
@@ -230,10 +233,11 @@ else:
                         st.session_state['file_uploader_key'] += 1
                         st.rerun()
                         
-                    except sqlite3.IntegrityError:
-                        st.error(f"Gagal: Absensi untuk tanggal **{tgl_input}** sudah pernah di-input sebelumnya!")
                     except Exception as err:
-                        st.error(f"Terjadi kesalahan format waktu: {err}")
+                        if "unique_user_tanggal" in str(err) or "duplicate key" in str(err):
+                            st.error(f"Gagal: Absensi untuk tanggal **{tgl_input}** sudah pernah di-input sebelumnya!")
+                        else:
+                            st.error(f"Terjadi kesalahan: {err}")
 
     # Bagian bawah: Rekapitulasi Mingguan Otomatis & Total Keseluruhan
     st.markdown("---")
@@ -241,7 +245,7 @@ else:
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = ? ORDER BY id DESC", (st.session_state['user_id'],))
+        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = %s ORDER BY id DESC", (st.session_state['user_id'],))
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -299,7 +303,7 @@ else:
                                 try:
                                     conn_del = get_connection()
                                     cur_del = conn_del.cursor()
-                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = ? AND user_id = ?", (row_id, st.session_state['user_id']))
+                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = %s AND user_id = %s", (row_id, st.session_state['user_id']))
                                     conn_del.commit()
                                     cur_del.close()
                                     conn_del.close()
