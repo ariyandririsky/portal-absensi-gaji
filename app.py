@@ -164,7 +164,7 @@ else:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🖼️ Preview Bukti Absen")
+            st.subheader("🖼️️ Preview Bukti Absen")
             image = Image.open(uploaded_file)
             st.image(image, caption="Screenshot Terunggah", use_container_width=True)
 
@@ -263,6 +263,11 @@ else:
             # --- BAGIAN GRAFIK VISUALISASI ---
             st.markdown("### 📈 Grafik Tren Pendapatan & Jam Kerja")
             df_chart = pd.DataFrame(data, columns=["ID", "Tanggal", "Jam Masuk", "Jam Keluar", "Total Jam", "Estimasi Gaji"])
+            
+            # Mengurutkan data grafik berdasarkan tanggal kronologis
+            df_chart['CleanDate'] = df_chart['Tanggal'].str.replace(r'^[A-Za-z]+,\s+', '', regex=True) + " 2026"
+            df_chart['ParsedDate'] = pd.to_datetime(df_chart['CleanDate'], format='%B %d %Y', errors='coerce')
+            df_chart = df_chart.sort_values('ParsedDate')
             
             # Membuat dua kolom grafik agar rapi berdampingan
             g_col1, g_col2 = st.columns(2)
