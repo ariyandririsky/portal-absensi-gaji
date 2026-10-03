@@ -1,5 +1,5 @@
 import streamlit as st
-import psycopg2
+import sqlite3
 from PIL import Image
 import pytesseract
 import re
@@ -27,26 +27,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fungsi koneksi ke database Supabase (PostgreSQL) yang aman dari salah key secrets
+# Fungsi koneksi ke SQLite (lokal/file di repo, aman & permanen)
 def get_connection():
-    if "SUPABASE_DB_URL" in st.secrets:
-        db_url = st.secrets["SUPABASE_DB_URL"]
-    elif "SUPABASE_URL" in st.secrets:
-        db_url = st.secrets["SUPABASE_URL"]
-    else:
-        raise ValueError("URL Database Supabase belum disetel di Streamlit Secrets!")
-    
-    conn = psycopg2.connect(db_url)
+    conn = sqlite3.connect("absensi_lokal.db", check_same_thread=False)
     return conn
 
-# Inisialisasi tabel database PostgreSQL
+# Inisialisasi tabel database SQLite
 def init_db():
     try:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nama TEXT,
                 kontak TEXT UNIQUE,
                 password TEXT
@@ -54,7 +47,7 @@ def init_db():
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS riwayat_absen (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
                 tanggal TEXT,
                 jam_masuk TEXT,
@@ -94,7 +87,7 @@ if not st.session_state['user_logged_in']:
                 try:
                     conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("SELECT id, nama, kontak, password FROM users WHERE kontak = %s AND password = %s", (login_kontak, login_pass))
+                    cursor.execute("SELECT id, nama, kontak, password FROM users WHERE kontak = ? AND password = ?", (login_kontak, login_pass))
                     user = cursor.fetchone()
                     cursor.close()
                     conn.close()
@@ -120,7 +113,7 @@ if not st.session_state['user_logged_in']:
                     try:
                         conn = get_connection()
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (%s, %s, %s)", (reg_nama, reg_kontak, reg_pass))
+                        cursor.execute("INSERT INTO users (nama, kontak, password) VALUES (?, ?, ?)", (reg_nama, reg_kontak, reg_pass))
                         conn.commit()
                         cursor.close()
                         conn.close()
@@ -170,7 +163,7 @@ else:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🖼️️ Preview Bukti Absen")
+            st.subheader("🖼️ Preview Bukti Absen")
             image = Image.open(uploaded_file)
             st.image(image, caption="Screenshot Terunggah", use_container_width=True)
 
@@ -221,7 +214,7 @@ else:
                         cursor = conn.cursor()
                         query = """
                             INSERT INTO riwayat_absen (user_id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji) 
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            VALUES (?, ?, ?, ?, ?, ?)
                         """
                         cursor.execute(query, (st.session_state['user_id'], tgl_input, jam_masuk_input, jam_keluar_input, round(total_jam_bersih, 2), estimasi_gaji))
                         conn.commit()
@@ -239,7 +232,7 @@ else:
                         st.rerun()
                         
                     except Exception as err:
-                        if "unique_user_tanggal" in str(err) or "duplicate key" in str(err):
+                        if "UNIQUE constraint failed" in str(err):
                             st.error(f"Gagal: Absensi untuk tanggal **{tgl_input}** sudah pernah di-input sebelumnya!")
                         else:
                             st.error(f"Terjadi kesalahan: {err}")
@@ -250,7 +243,7 @@ else:
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = %s ORDER BY id DESC", (st.session_state['user_id'],))
+        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = ? ORDER BY id DESC", (st.session_state['user_id'],))
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -308,7 +301,7 @@ else:
                                 try:
                                     conn_del = get_connection()
                                     cur_del = conn_del.cursor()
-                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = %s AND user_id = %s", (row_id, st.session_state['user_id']))
+                                    cur_del.execute("DELETE FROM riwayat_absen WHERE id = ? AND user_id = ?", (row_id, st.session_state['user_id']))
                                     conn_del.commit()
                                     cur_del.close()
                                     conn_del.close()
