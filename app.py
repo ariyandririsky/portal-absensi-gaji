@@ -27,10 +27,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fungsi koneksi ke database Supabase (PostgreSQL)
+# Fungsi koneksi ke database Supabase (PostgreSQL) yang aman dari salah key secrets
 def get_connection():
-    # Ambil URL database dari Streamlit Secrets
-    db_url = st.secrets["SUPABASE_DB_URL"]
+    if "SUPABASE_DB_URL" in st.secrets:
+        db_url = st.secrets["SUPABASE_DB_URL"]
+    elif "SUPABASE_URL" in st.secrets:
+        db_url = st.secrets["SUPABASE_URL"]
+    else:
+        raise ValueError("URL Database Supabase belum disetel di Streamlit Secrets!")
+    
     conn = psycopg2.connect(db_url)
     return conn
 
@@ -165,7 +170,7 @@ else:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🖼️ Preview Bukti Absen")
+            st.subheader("🖼️️ Preview Bukti Absen")
             image = Image.open(uploaded_file)
             st.image(image, caption="Screenshot Terunggah", use_container_width=True)
 
