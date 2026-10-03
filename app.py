@@ -4,6 +4,7 @@ from PIL import Image
 import pytesseract
 import re
 from datetime import datetime, timedelta
+import pandas as pd
 
 # Konfigurasi halaman modern
 st.set_page_config(page_title="Portal Absensi & Gaji", page_icon="💼", layout="wide")
@@ -237,13 +238,13 @@ else:
                         else:
                             st.error(f"Terjadi kesalahan: {err}")
 
-    # Bagian bawah: Rekapitulasi Mingguan Otomatis & Total Keseluruhan
+    # Bagian bawah: Rekapitulasi Mingguan Otomatis, Grafik Visualisasi & Total Keseluruhan
     st.markdown("---")
     st.subheader("📊 Rekapitulasi & Prediksi Gaji Mingguan")
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = ? ORDER BY id DESC", (st.session_state['user_id'],))
+        cursor.execute("SELECT id, tanggal, jam_masuk, jam_keluar, total_jam, estimasi_gaji FROM riwayat_absen WHERE user_id = ? ORDER BY id ASC", (st.session_state['user_id'],))
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -258,12 +259,30 @@ else:
                 st.metric(label="Total Akumulasi Gaji Keseluruhan", value=f"Rp {total_akumulasi_gaji:,}")
             
             st.markdown("<br>", unsafe_allow_html=True)
+
+            # --- BAGIAN GRAFIK VISUALISASI ---
+            st.markdown("### 📈 Grafik Tren Pendapatan & Jam Kerja")
+            df_chart = pd.DataFrame(data, columns=["ID", "Tanggal", "Jam Masuk", "Jam Keluar", "Total Jam", "Estimasi Gaji"])
+            
+            # Membuat dua kolom grafik agar rapi berdampingan
+            g_col1, g_col2 = st.columns(2)
+            with g_col1:
+                st.markdown("**Grafik Estimasi Gaji per Tanggal**")
+                st.bar_chart(df_chart.set_index("Tanggal")["Estimasi Gaji"])
+            with g_col2:
+                st.markdown("**Grafik Jam Kerja Bersih (Jam)**")
+                st.line_chart(df_chart.set_index("Tanggal")["Total Jam"])
+
+            st.markdown("<br>", unsafe_allow_html=True)
             
             # --- PENGELOMPOKAN MINGGUAN DENGAN RENTANG TANGGAL (CUT-OFF JUMAT) ---
             st.markdown("### 🗓️ Rincian per Periode Pekan (Pencairan Jumat)")
             
+            # Balik urutan data biar yang terbaru di atas untuk rincian teks
+            data_desc = sorted(data, key=lambda x: x[0], reverse=True)
+            
             pengelompokan_minggu = {}
-            for row in data:
+            for row in data_desc:
                 tgl_str = row[1]
                 
                 try:
